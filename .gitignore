@@ -1,0 +1,22 @@
+# Main-Switch backups
+Scripts/Patching/SwitchBackups/*.bak
+
+# Export output folders
+Export_*/
+Delta_*/
+
+# Working / staging folders
+Working/
+Final Upload/
+
+# Windows system files
+desktop.ini
+Thumbs.db
+
+# User-specific paths and credentials
+*.log
+
+# Environment config (real values) - ship the .example only
+Config/Environment.psd1
+
+# Claude Code - track .claude/ settings and CLAUDE.md (do not ignore)

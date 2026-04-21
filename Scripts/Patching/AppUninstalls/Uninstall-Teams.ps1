@@ -1,0 +1,983 @@
+# DOTS formatting comment
+
+
+# --- Local exit code lookup (this script runs remotely where modules are unavailable) ---
+function Get-ExitCodeComment {
+    param([int]$Code)
+    switch ($Code) {
+        0       { "Completed Successfully" }
+        1       { "Incorrect Function" }
+        2       { "File cannot be found" }
+        3       { "Cannot find the specified path" }
+        5       { "Access denied" }
+        8       { "Not enough memory resources are available to process this command" }
+        13      { "The data is invalid" }
+        23      { "The component store has been corrupted / Generic Error - Check logs" }
+        38      { "Windows is unable to load the device driver because a previous version is still in memory, resulting in conflicts" }
+        53      { "The network path was not found" }
+        59      { "Unexpected network error" }
+        87      { "The parameter is incorrect" }
+        112     { "There is not enough space on the disk." }
+        184     { "A necessary file is locked by another process" }
+        233     { "No process is on the other end of the pipe" }
+        267     { "Directory name is invalid" }
+        1060    { "The specified service does not exist as an installed service" }
+        1392    { "A file or files are corrupt" }
+        1450    { "Insufficient system resources exist to complete the requested service" }
+        1602    { "User canceled installation" }
+        1603    { "Fatal error during installation" }
+        1605    { "This action is only valid for products that are currently installed" }
+        1612    { "The installation source for this product is not available" }
+        1618    { "Another installation is in progress" }
+        1619    { "The installation package could not be opened" }
+        1620    { "This installation package could not be opened. Contact the application vendor to verify that this is a valid Windows Installer package." }
+        1635    { "This update package could not be opened" }
+        1636    { "Update package cannot be opened" }
+        1641    { "Successful - Restart required" }
+        1642    { "Upgrade cannot be installed - Missing software" }
+        1648    { "No valid sequence could be found for the set of patches" }
+        1726    { "The remote procedure call failed" }
+        3010    { "Successful - Restart required" }
+        14001   { "The application failed to start" }
+        14098   { "The component store has been corrupted" }
+        2359302 { "The patch has already been installed" }
+        -1073741510 { "Cmd.exe window was closed" }
+        -2067919934 { "SQL server related error" }
+        -2145116147 { "The update handler did not install the update because it needs to be downloaded again" }
+        -2146959355 { ".NET framework installation failure" }
+        -2145124329 { "Patch installation failure" }
+        -2145124322 { "Generic error" }
+        -2145124330 { "Another install is ongoing or reboot is pending" }
+        -2146498167 { "The device is missing important security and quality fixes" }
+        -2146498172 { "The matching component directory exists but binary is missing" }
+        -2146498299 { "DISM Package Manager processed the command line but failed" }
+        -2146498304 { "An unknown error occurred" }
+        -2146498511 { "Corruption in the windows component store" }
+        -2147417839 { "OLE received a packet with an invalid header (RPC Error)" }
+        -2147467259 { "A file that the Windows Product Activation (WPA) requires is damaged or missing" }
+        -2147956498 { "The component store has been corrupted" }
+        default { $null }
+    }
+}
+
+
+# --- Event log capture for action correlation ---
+function Get-ActionEvents {
+    param(
+        [datetime]$Start,
+        [datetime]$End
+    )
+    $End = $End.AddSeconds(5)
+    $providers = @(
+        'MsiInstaller'
+        'Microsoft-Windows-WindowsUpdateClient'
+        'Microsoft-Windows-Servicing'
+    )
+    $allEvents = @()
+    foreach ($provider in $providers) {
+        $filter = @{
+            ProviderName = $provider
+            StartTime    = $Start
+            EndTime      = $End
+        }
+        try {
+            $found = @(Get-WinEvent -FilterHashtable $filter -ErrorAction Stop)
+            if ($found.Count -gt 0) {
+                $allEvents += $found
+            }
+        }
+        catch { }
+    }
+    $sorted = @($allEvents | Sort-Object TimeCreated | Select-Object -First 25)
+    $result = @($sorted | ForEach-Object {
+        [PSCustomObject]@{
+            Time    = $_.TimeCreated.ToString('HH:mm:ss')
+            Source  = $_.ProviderName
+            Id      = $_.Id
+            Message = (($_.Message -split "`n")[0]).Trim()
+        }
+    })
+    return $result
+}
+
+
+# --- Safely parse a registry UninstallString into executable + args ---
+# Registry UninstallString values are untrusted (any installed app can write
+# arbitrary values). Handing the whole string to 'cmd /c' lets shell
+# metacharacters (&, |, ;, etc.) chain arbitrary commands. This helper splits
+# the string into a literal FilePath and a raw ArgumentList for use with
+# Start-Process, which calls CreateProcess directly and bypasses the shell.
+#
+# Returns $null if no valid absolute-path executable can be resolved.
+function Split-UninstallString {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$CommandLine
+    )
+
+    $trimmed = $CommandLine.Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        return $null
+    }
+
+    # Case 1: quoted executable. Extract up to the closing quote.
+    if ($trimmed.StartsWith('"')) {
+        $closeIdx = $trimmed.IndexOf('"', 1)
+        if ($closeIdx -gt 1) {
+            $filePath = $trimmed.Substring(1, $closeIdx - 1)
+            $argList  = $trimmed.Substring($closeIdx + 1).Trim()
+            if (Test-Path -LiteralPath $filePath -PathType Leaf) {
+                return [PSCustomObject]@{
+                    FilePath     = $filePath
+                    ArgumentList = $argList
+                }
+            }
+        }
+        return $null
+    }
+
+    # Case 2: unquoted. Walk whitespace-delimited tokens, progressively
+    # joining until Test-Path succeeds. Require absolute path (drive letter
+    # or UNC) to reject bare command names like 'cmd.exe' that could resolve
+    # via CWD or PATH in a remote runspace.
+    $tokens = @($trimmed -split '\s+')
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        $candidate = ($tokens[0..$i] -join ' ')
+        if ($candidate -notmatch '^(?:[A-Za-z]:\\|\\\\)') {
+            continue
+        }
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            $argList = ''
+            if ($i -lt ($tokens.Count - 1)) {
+                $argList = ($tokens[($i + 1)..($tokens.Count - 1)] -join ' ')
+            }
+            return [PSCustomObject]@{
+                FilePath     = $candidate
+                ArgumentList = $argList
+            }
+        }
+    }
+
+    return $null
+}
+
+
+# Unpack config hashtable passed from Invoke-Patch.ps1
+$config        = $Args[0]
+$softwareName  = $config.Software
+$softwarePaths = @($config.SoftwarePaths)
+$version       = $config.CompliantVer
+$processName   = $config.ProcessName
+$installLine   = @($config.InstallLine)
+$versionType   = $config.VersionType
+
+
+
+# --- Incremental log setup (write-through so timed-out machines still have logs) ---
+
+$script:logPath = $null
+try {
+    $logDir = 'C:\Temp\PatchRemediation\Logs'
+    $null = New-Item -Path $logDir -ItemType Directory -Force -ErrorAction Stop
+
+    $logAdmin = if ($config.AdminName) { $config.AdminName } else { $env:USERNAME }
+    $logTimestamp = Get-Date -Format 'yyyy-MM-dd_HHmm'
+    $safeName = ($softwareName -replace '[^a-zA-Z0-9._-]', '_')
+    $logFileName = '{0}_{1}_{2}.log' -f $logTimestamp, $safeName, $logAdmin
+    $script:logPath = Join-Path $logDir $logFileName
+
+    $divider = '=' * 60
+    $thinDiv = '-' * 60
+    $header = @(
+        $divider
+        'Patch Remediation Log'
+        $divider
+        "Software    : $softwareName"
+        "Target Ver  : $version"
+        "Admin       : $logAdmin"
+        "Date        : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
+        "Computer    : $env:COMPUTERNAME"
+        $thinDiv
+        ''
+    )
+    $header | Out-File -FilePath $script:logPath -Encoding ASCII -Force
+}
+catch {
+    # Log init failure must not break patch operation
+}
+
+function Write-ActionToLog {
+    param($Action)
+    if (-not $script:logPath) { return }
+    try {
+        $codeComment = ''
+        if ($null -ne $Action.ExitCode) {
+            $c = Get-ExitCodeComment $Action.ExitCode
+            if ($c) { $codeComment = " - $c" }
+        }
+        $lines = @(
+            "[$($Action.Phase)] $($Action.Command)"
+            "  Exit Code : $($Action.ExitCode)$codeComment"
+            "  Duration  : $($Action.Duration)"
+            "  Source    : $($Action.Source)"
+        )
+        if ($Action.Error) {
+            $lines += "  Error     : $($Action.Error)"
+        }
+        if ($Action.StartTime -and $Action.EndTime) {
+            $events = @(Get-ActionEvents -Start $Action.StartTime -End $Action.EndTime)
+            if ($events.Count -gt 0) {
+                $evtLabel = "  Events ($($events.Count)):"
+                if ($events.Count -ge 25) {
+                    $evtLabel = "  Events (25+ showing first 25):"
+                }
+                $lines += $evtLabel
+                foreach ($evt in $events) {
+                    $evtMsg = $evt.Message
+                    if ($evtMsg.Length -gt 80) {
+                        $evtMsg = $evtMsg.Substring(0, 77) + '...'
+                    }
+                    $lines += "    $($evt.Time) | $($evt.Source) ($($evt.Id)) : $evtMsg"
+                }
+            }
+            else {
+                $lines += "  Events    : None captured"
+            }
+        }
+        $lines += ''
+        $lines | Out-File -FilePath $script:logPath -Encoding ASCII -Append
+    }
+    catch {
+        # Log append failure must not break patch operation
+    }
+}
+
+function Write-ProcessSnapshot {
+    param(
+        [string]$Label,
+        [string[]]$Extra
+    )
+    if (-not $script:logPath) { return }
+    try {
+        $watchList = @($processName -split " ") + @('msiexec')
+        if ($Extra) { $watchList += $Extra }
+        $watchList = $watchList | Select-Object -Unique
+        $found = @()
+        foreach ($name in $watchList) {
+            $procs = @(Get-Process $name -ErrorAction 0)
+            foreach ($p in $procs) {
+                $cmdLine = '(unavailable)'
+                $cim = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction 0
+                if ($cim.CommandLine) { $cmdLine = $cim.CommandLine }
+                $found += "    $($p.Name) (PID $($p.Id)) | $cmdLine"
+            }
+        }
+        $lines = @("[Snapshot] $Label")
+        if ($found.Count -gt 0) {
+            $lines += "  Processes ($($found.Count)):"
+            $lines += $found
+        }
+        else {
+            $lines += "  Processes : None found"
+        }
+        $lines += ''
+        $lines | Out-File -FilePath $script:logPath -Encoding ASCII -Append
+    }
+    catch { }
+}
+
+# --- End incremental log setup ---
+
+
+$actionLog = [System.Collections.ArrayList]::new()
+$localVerArray = @()
+$softwarePathsFull = @()
+$softwarePathsComment = @()
+
+foreach ($path in $softwarePaths) {
+
+    if ($path -cmatch 'USER') {
+
+        [System.Collections.ArrayList]$userArray = (Get-ChildItem "C:\Users").Name
+        $userArray.Remove('Public')
+        $userArray.Remove('ADMINI~1')
+        $userArray.Remove('svcpatch01$')
+
+        foreach ($user in $userArray) {
+            $userPathRaw = $path.Replace('USER',"$user")
+            $userPathGCI = Get-ChildItem $userPathRaw -Force -ErrorAction 0
+
+            if ((Test-Path $userPathRaw) -and ($null -ne $userPathGCI)) {
+
+                $item = Get-Item $userPathRaw -Force -ErrorAction 0
+
+                if (($item).Mode -match "a") {
+
+                    if ($versionType -eq "Product") {
+                        $userPathVer1 = $userPathGCI.VersionInfo.ProductVersion
+                    }
+                    else {
+                        $userPathVer1 = $userPathGCI.VersionInfo.FileVersionRaw
+                    }
+
+                    if ($null -eq $userPathVer1) {
+                        $userPathVer1 = $userPathGCI.VersionInfo.ProductVersion
+                    }
+
+                    if ($null -eq $userPathVer1) {
+                        $userPathVer1 = $userPathGCI.VersionInfo.FileVersion
+                    }
+
+                    if ($null -eq $userPathVer1) {
+                        continue
+                    }
+
+                    if (($userPathVer1).gettype().name -match "string") {
+                        [version]$userPathVer1 = $userPathVer1.Replace(",",".")
+                    }
+
+                    $softwarePathsFull += $userPathRaw
+                    $softwarePathsComment += $userPathGCI.FullName
+                    $localVerArray += $userPathVer1
+
+                    try {
+                        if ([version]$userPathVer1 -lt [version]$version) {
+                            [array]$targetUsers += $user
+                        }
+                    }
+                    catch {
+                        [array]$targetUsers += $user
+                    }
+                }
+
+                if (($item).Mode -match "d") {
+                    [array]$targetUsers += $user
+                }
+            }
+        }
+    }
+
+    else {
+        $softwarePathsFull += $path
+
+        $pathGCI = Get-ChildItem $path -Force -ErrorAction 0
+
+        if ($versionType -eq "Product") {
+            $pathVer1 = $pathGCI.VersionInfo.ProductVersion
+        }
+        else {
+            $pathVer1 = $pathGCI.VersionInfo.FileVersionRaw
+        }
+
+        if ($null -eq $pathVer1) {
+            $pathVer1 = $pathGCI.VersionInfo.ProductVersion
+        }
+
+        if ($null -eq $pathVer1) {
+            $pathVer1 = $pathGCI.VersionInfo.FileVersion
+        }
+
+        if ($null -eq $pathVer1) {
+            continue
+        }
+
+        if (($pathVer1).gettype().name -match "string") {
+            [version]$pathVer1 = $pathVer1.Replace(",",".")
+        }
+
+        $localVerArray += $pathVer1
+    }
+}
+
+
+
+$a = 0
+[array]$installLineFull = $installLine
+foreach ($line in $installLineFull) {
+    if ($line -cmatch 'USER') {
+        $userInstallLines = @()
+        foreach ($targetUser in $targetUsers) {
+            $userInstallLines += $line.Replace('USER',"$targetUser")
+        }
+        $installLineFull[$a] = $userInstallLines
+    }
+    $a++
+}
+
+$installLineArrayRaw = @()
+foreach ($parentLine in $installLineFull) {
+    foreach ($line0 in $parentLine) {
+        $installLineArrayRaw += $line0
+    }
+}
+
+$installLineArray = $installLineArrayRaw
+
+
+
+# --- End Process Start ---
+
+Set-ExecutionPolicy Bypass -Scope Process -Force
+
+Write-ProcessSnapshot "Before Process Kill"
+
+# Kill Teams processes (covers both old and new Teams)
+$teamsProcs = @('Teams', 'ms-teams', 'MSTeams')
+foreach ($proc in $teamsProcs) {
+    Get-Process $proc -ErrorAction 0 | Stop-Process -Force
+}
+
+foreach ($process in $processName -split " ") {
+    Get-Process $process -ErrorAction 0 | Stop-Process -Force
+}
+
+Write-ProcessSnapshot "After Process Kill"
+
+# --- End Process End ---
+
+
+
+# --- Uninstall Section Start ---
+
+$regKeys = @(
+    'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+    'HKCU:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+)
+
+$uninstallKeys = Get-ItemProperty (Get-ChildItem $regKeys -ErrorAction SilentlyContinue -Force).PSPath |
+    Where-Object {$_ -match "$softwareName"}
+
+if ($null -eq $uninstallKeys -and $localVerArray.length -gt 0) {
+    $regComment = "No Registry Keys"
+}
+else {
+    foreach ($string in $uninstallKeys) {
+        if ($string -match "msiexec.exe") {
+
+            $string1 = $string.UninstallString -replace "msiexec.exe","" -replace "/I","" -replace "/x",""
+            $string1 = $string1.trim()
+
+            $msiArgs = "/X $string1 /quiet /norestart"
+            $actionStart = Get-Date
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $proc = Start-Process "C:\Windows\System32\msiexec.exe" -ArgumentList $msiArgs -PassThru
+
+            if ($proc.WaitForExit(600000)) {
+
+                $code = $proc.ExitCode
+
+            } else {
+
+                $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+
+                $code = -1
+
+            }
+            $sw.Stop()
+            $actionEnd = Get-Date
+
+            $actionEntry = [PSCustomObject]@{
+                Phase     = 'Uninstall'
+                Command   = "msiexec.exe $msiArgs"
+                ExitCode  = $code
+                Duration  = $sw.Elapsed.ToString()
+                Source    = 'Registry-MSI'
+                StartTime = $actionStart
+                EndTime   = $actionEnd
+            }
+            $actionLog.Add($actionEntry) > $null
+            Write-ActionToLog $actionEntry
+
+        }
+        elseif ($string.QuietUninstallString) {
+
+            $actionStart = Get-Date
+            $parts = Split-UninstallString -CommandLine $string.QuietUninstallString
+
+            if ($null -eq $parts) {
+                $actionEnd = Get-Date
+                $actionEntry = [PSCustomObject]@{
+                    Phase     = 'Uninstall'
+                    Command   = $string.QuietUninstallString
+                    ExitCode  = $null
+                    Duration  = '00:00:00'
+                    Source    = 'Registry-QuietUninstall'
+                    Error     = 'Unparseable UninstallString - no valid executable found'
+                    StartTime = $actionStart
+                    EndTime   = $actionEnd
+                }
+                $actionLog.Add($actionEntry) > $null
+                Write-ActionToLog $actionEntry
+                continue
+            }
+
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $spParams = @{
+                FilePath = $parts.FilePath
+                PassThru = $true
+            }
+            if (-not [string]::IsNullOrWhiteSpace($parts.ArgumentList)) {
+                $spParams.ArgumentList = $parts.ArgumentList
+            }
+            $proc = Start-Process @spParams
+
+            if ($proc.WaitForExit(600000)) {
+
+                $uninstallExit = $proc.ExitCode
+
+            } else {
+
+                $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+
+                $uninstallExit = -1
+
+            }
+            $sw.Stop()
+            $actionEnd = Get-Date
+
+            $actionEntry = [PSCustomObject]@{
+                Phase     = 'Uninstall'
+                Command   = $string.QuietUninstallString
+                ExitCode  = $uninstallExit
+                Duration  = $sw.Elapsed.ToString()
+                Source    = 'Registry-QuietUninstall'
+                StartTime = $actionStart
+                EndTime   = $actionEnd
+            }
+            $actionLog.Add($actionEntry) > $null
+            Write-ActionToLog $actionEntry
+
+        }
+        elseif ($string.UninstallString) {
+
+            $actionStart = Get-Date
+            $parts = Split-UninstallString -CommandLine $string.UninstallString
+
+            if ($null -eq $parts) {
+                $actionEnd = Get-Date
+                $actionEntry = [PSCustomObject]@{
+                    Phase     = 'Uninstall'
+                    Command   = $string.UninstallString
+                    ExitCode  = $null
+                    Duration  = '00:00:00'
+                    Source    = 'Registry-Uninstall'
+                    Error     = 'Unparseable UninstallString - no valid executable found'
+                    StartTime = $actionStart
+                    EndTime   = $actionEnd
+                }
+                $actionLog.Add($actionEntry) > $null
+                Write-ActionToLog $actionEntry
+                continue
+            }
+
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $spParams = @{
+                FilePath = $parts.FilePath
+                PassThru = $true
+            }
+            if (-not [string]::IsNullOrWhiteSpace($parts.ArgumentList)) {
+                $spParams.ArgumentList = $parts.ArgumentList
+            }
+            $proc = Start-Process @spParams
+
+            if ($proc.WaitForExit(600000)) {
+
+                $uninstallExit = $proc.ExitCode
+
+            } else {
+
+                $proc | Stop-Process -Force -ErrorAction SilentlyContinue
+
+                $uninstallExit = -1
+
+            }
+            $sw.Stop()
+            $actionEnd = Get-Date
+
+            $actionEntry = [PSCustomObject]@{
+                Phase     = 'Uninstall'
+                Command   = $string.UninstallString
+                ExitCode  = $uninstallExit
+                Duration  = $sw.Elapsed.ToString()
+                Source    = 'Registry-Uninstall'
+                StartTime = $actionStart
+                EndTime   = $actionEnd
+            }
+            $actionLog.Add($actionEntry) > $null
+            Write-ActionToLog $actionEntry
+
+        }
+    }
+}
+
+# --- Uninstall Section End ---
+
+
+
+# =============================================================================
+# Teams-Specific Cleanup
+# =============================================================================
+# Covers both old Teams (per-user, AppData) and new Teams (MSIX/Appx).
+# Old Teams: per-user install at AppData\Local\Microsoft\Teams
+# New Teams: system-wide MSIX package (MSTeams / MicrosoftTeams)
+# Machine-wide installer: Program Files (x86)\Teams Installer
+# =============================================================================
+
+
+# --- Old Teams: per-user uninstall via install line ---
+# The installLine from config typically contains the per-user --uninstall command.
+
+if ($localVerArray.Count -gt 0) {
+
+    $actionStart = Get-Date
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    try {
+        foreach ($line in $installLineArray) {
+            $installer = [Scriptblock]::Create($line)
+            & $installer
+
+            if ($null -ne $LASTEXITCODE) {
+                $actionEntry = [PSCustomObject]@{
+                    Phase     = 'Uninstall'
+                    Command   = $line
+                    ExitCode  = $LASTEXITCODE
+                    Duration  = $sw.Elapsed.ToString()
+                    Source    = 'Teams-PerUserUninstall'
+                    StartTime = $actionStart
+                    EndTime   = (Get-Date)
+                }
+                $actionLog.Add($actionEntry) > $null
+                Write-ActionToLog $actionEntry
+            }
+        }
+    }
+    catch {
+        $actionEntry = [PSCustomObject]@{
+            Phase     = 'Uninstall'
+            Command   = $line
+            ExitCode  = $null
+            Duration  = $sw.Elapsed.ToString()
+            Source    = 'Teams-PerUserUninstall-Error'
+            Error     = $_.Exception.Message
+            StartTime = $actionStart
+            EndTime   = (Get-Date)
+        }
+        $actionLog.Add($actionEntry) > $null
+        Write-ActionToLog $actionEntry
+    }
+
+    $sw.Stop()
+}
+
+
+# --- New Teams: MSIX/Appx package removal (system-wide) ---
+
+$actionStart = Get-Date
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$msixRemoved = 0
+
+# Remove for all users (system-wide new Teams)
+$newTeamsPackages = @(Get-AppxPackage -AllUsers -Name "*MSTeams*" -ErrorAction SilentlyContinue)
+$newTeamsPackages += @(Get-AppxPackage -AllUsers -Name "*MicrosoftTeams*" -ErrorAction SilentlyContinue)
+
+foreach ($pkg in $newTeamsPackages) {
+    try {
+        $pkg | Remove-AppxPackage -AllUsers -ErrorAction Stop
+        $msixRemoved++
+    }
+    catch {
+        # May fail if package is in use or already partially removed
+    }
+}
+
+# Also remove provisioned packages to prevent reinstall for new users
+$provPackages = @(Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
+    Where-Object { $_.DisplayName -match 'MSTeams|MicrosoftTeams' })
+
+foreach ($prov in $provPackages) {
+    try {
+        Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction Stop
+        $msixRemoved++
+    }
+    catch { }
+}
+
+$sw.Stop()
+$actionEnd = Get-Date
+
+$actionEntry = [PSCustomObject]@{
+    Phase     = 'Uninstall'
+    Command   = "Remove MSIX Teams packages ($msixRemoved removed)"
+    ExitCode  = 0
+    Duration  = $sw.Elapsed.ToString()
+    Source    = 'Teams-MSIX'
+    StartTime = $actionStart
+    EndTime   = $actionEnd
+}
+$actionLog.Add($actionEntry) > $null
+Write-ActionToLog $actionEntry
+
+
+# --- Machine-wide Teams installer removal ---
+
+$machineInstallerPath = 'C:\Program Files (x86)\Teams Installer'
+if (Test-Path $machineInstallerPath -ErrorAction 0) {
+
+    $actionStart = Get-Date
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+    Remove-Item $machineInstallerPath -Recurse -Force -ErrorAction SilentlyContinue
+
+    if (Test-Path $machineInstallerPath -ErrorAction 0) {
+        cmd /c "rmdir /s /q `"$machineInstallerPath`"" 2>$null
+    }
+
+    $sw.Stop()
+    $actionEnd = Get-Date
+
+    $actionEntry = [PSCustomObject]@{
+        Phase     = 'Cleanup'
+        Command   = "Remove Teams machine-wide installer"
+        ExitCode  = 0
+        Duration  = $sw.Elapsed.ToString()
+        Source    = 'Teams-MachineInstaller'
+        StartTime = $actionStart
+        EndTime   = $actionEnd
+    }
+    $actionLog.Add($actionEntry) > $null
+    Write-ActionToLog $actionEntry
+}
+
+
+# --- Per-user Teams file cleanup ---
+# Clean up old and new Teams per-user data for all users
+
+$allUsers = @(Get-ChildItem "C:\Users" -Force -ErrorAction 0 |
+    Where-Object { $_ -notmatch 'Public' })
+
+$perUserTeamsPaths = @(
+    'AppData\Local\Microsoft\Teams'
+    'AppData\Local\Microsoft\TeamsMeetingAddin'
+    'AppData\Local\Microsoft\TeamsPresenceAddin'
+    'AppData\Roaming\Microsoft Teams'
+    'AppData\Roaming\Microsoft\Teams'
+    'AppData\Local\Packages\MSTeams_8wekyb3d8bbwe'
+    'AppData\Local\Packages\MicrosoftTeams_8wekyb3d8bbwe'
+)
+
+$actionStart = Get-Date
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$cleanedCount = 0
+
+foreach ($u in $allUsers) {
+    foreach ($relPath in $perUserTeamsPaths) {
+        $fullPath = "C:\Users\$u\$relPath"
+        if (Test-Path $fullPath -ErrorAction 0) {
+
+            # ACL -- Take ownership and grant FullControl
+            $acl = Get-Acl -Path $fullPath -ErrorAction 0
+            if ($null -ne $acl) {
+                try {
+                    $owner = New-Object System.Security.Principal.Ntaccount("$env:USERNAME")
+                    $acl.SetOwner($owner)
+                    $acl | Set-Acl -Path $fullPath -ErrorAction SilentlyContinue
+                }
+                catch { }
+            }
+
+            try {
+                $newAcl = Get-Acl -Path $fullPath -ErrorAction 0
+                if ($null -ne $newAcl) {
+                    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                        "$env:USERNAME", "FullControl", "Allow")
+                    $newAcl.SetAccessRule($rule)
+                    Set-Acl -Path $fullPath -AclObject $newAcl -ErrorAction SilentlyContinue
+                }
+            }
+            catch { }
+
+            # Delete
+            Remove-Item $fullPath -Recurse -Force -ErrorAction SilentlyContinue
+
+            if (Test-Path $fullPath -ErrorAction 0) {
+                cmd /c "rmdir /s /q `"$fullPath`"" 2>$null
+            }
+
+            $cleanedCount++
+        }
+    }
+}
+
+$sw.Stop()
+$actionEnd = Get-Date
+
+if ($cleanedCount -gt 0) {
+    $actionEntry = [PSCustomObject]@{
+        Phase     = 'Cleanup'
+        Command   = "Per-user Teams folder cleanup ($cleanedCount folders targeted)"
+        ExitCode  = 0
+        Duration  = $sw.Elapsed.ToString()
+        Source    = 'Teams-PerUserCleanup'
+        StartTime = $actionStart
+        EndTime   = $actionEnd
+    }
+    $actionLog.Add($actionEntry) > $null
+    Write-ActionToLog $actionEntry
+}
+
+
+# --- Kill Teams again after cleanup ---
+
+foreach ($proc in $teamsProcs) {
+    Get-Process $proc -ErrorAction 0 | Stop-Process -Force
+}
+
+
+# =============================================================================
+# End Teams-Specific Cleanup
+# =============================================================================
+
+
+Write-ProcessSnapshot "After Cleanup" -Extra $teamsProcs
+
+$updateVerArray = @()
+foreach ($softwarePath in $softwarePathsFull) {
+    $updatePathGCI = Get-ChildItem $softwarePath -Force -ErrorAction 0
+
+    if ($versionType -eq "Product") {
+        $updatePathVer1 = $updatePathGCI.VersionInfo.ProductVersion
+    }
+    else {
+        $updatePathVer1 = $updatePathGCI.VersionInfo.FileVersionRaw
+    }
+
+    if ($null -eq $updatePathVer1) {
+        $updatePathVer1 = $updatePathGCI.VersionInfo.ProductVersion
+    }
+
+    if ($null -eq $updatePathVer1) {
+        $updatePathVer1 = $updatePathGCI.VersionInfo.FileVersion
+    }
+
+    if ($null -eq $updatePathVer1) {
+        continue
+    }
+
+    if (($updatePathVer1).gettype().name -match "string") {
+        [version]$updatePathVer1 = $updatePathVer1.Replace(",",".")
+    }
+
+    $updateVerArray += $updatePathVer1
+}
+
+
+if ($updateVerArray.length -eq 0) {
+
+    $updateVerReg = (Get-ItemProperty (Get-ChildItem $regKeys -ErrorAction SilentlyContinue).PSPath |
+        Where-Object {$_ -match $softwareName}).DisplayVersion
+
+    if (($null -ne $updateVerReg) -and ($null -eq $regComment)) {
+        $regComment = "Registry Version: $updateVerReg"
+    }
+
+    if ($null -eq $updateVerArray[0]) {
+        $updateVerArray = "Removed"
+    }
+}
+elseif ($localVerArray.length -ge 1) {
+    if ($updateVerArray[0] -eq $localVerArray[0]) {
+        $updateVerArray = "No Change"
+    }
+}
+
+if (($updateVerArray -match "Removed") -and ($localVerArray[0] -eq $null)) {
+    $updateVerArray = $null
+}
+
+
+
+#region --- Service checks ---
+
+$services = @("Netlogon","WinRM")
+foreach ($service in $services) {
+    if ((Get-Service $service).Status -ne "Running") {
+        Start-Service $service -PassThru -ErrorAction SilentlyContinue
+    }
+}
+
+#endregion --- Service checks ---
+
+
+
+$exitCodeArray = @($actionLog | Where-Object { $null -ne $_.ExitCode } |
+    ForEach-Object { $_.ExitCode })
+
+foreach ($action in $actionLog) {
+    if ($null -ne $action.ExitCode) {
+        $action | Add-Member -NotePropertyName 'Comment' -NotePropertyValue (
+            Get-ExitCodeComment $action.ExitCode) -Force
+    }
+}
+
+$exitCodeComment = $null
+if ($exitCodeArray.Count -gt 0) {
+    $exitCodeComment = Get-ExitCodeComment $exitCodeArray[-1]
+}
+
+$commentArray = @(
+    $exitCodeComment
+    $regComment
+    $softwarePathsComment
+)
+
+$b = 0
+foreach ($comment in $commentArray) {
+    if ($comment.Length -gt 0) {
+        if ($b -eq 0) {
+            $finalComment = $comment
+            $b++
+        }
+        else {
+            $finalComment = $finalComment, $comment -join " - "
+        }
+    }
+}
+
+
+#region --- Finalize Patch Remediation Log ---
+
+if ($script:logPath) {
+    try {
+        $thinDiv = '-' * 60
+        $divider = '=' * 60
+        $finalExitDisplay = $exitCodeArray[-1]
+        $finalCodeComment = ''
+        if ($exitCodeComment) { $finalCodeComment = " - $exitCodeComment" }
+
+        @(
+            $thinDiv
+            "Result      : ExitCode $finalExitDisplay$finalCodeComment"
+            $divider
+        ) | Out-File -FilePath $script:logPath -Encoding ASCII -Append
+    }
+    catch {
+        # Log finalize failure must not break patch operation
+    }
+}
+
+#endregion --- Finalize Patch Remediation Log ---
+
+
+$results = [PSCustomObject]@{
+    NewVersion = $updateVerArray
+    ExitCode   = $exitCodeArray[-1]
+    ExitCodes  = $exitCodeArray
+    Comment    = $finalComment
+    ActionLog  = @($actionLog)
+}
+
+return $results

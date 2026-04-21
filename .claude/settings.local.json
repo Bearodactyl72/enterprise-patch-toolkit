@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "WebSearch",
+      "WebFetch",
+      "Bash(ls:*)",
+      "Bash(wc:*)",
+      "Bash(file:*)",
+      "Bash(xxd:*)",
+      "Bash(sort:*)",
+      "Bash(diff:*)",
+      "Bash(stat:*)",
+      "Bash(xargs:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git remote:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git commit:*)",
+      "Bash(git add:*)",
+      "Bash(git tag:*)",
+      "Bash(git stash:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git fetch:*)",
+      "Bash(gh:*)",
+      "Bash(powershell.exe -NoProfile:*)",
+      "Bash(powershell -NoProfile:*)",
+      "Bash(perl -ne:*)",
+      "Bash(python3 -c:*)",
+      "Bash(node -e:*)",
+      "Skill(update-config:*)",
+      "Bash(powershell -Command \"$content = Get-Content ''Scripts\\\\Main-Switch.ps1'' -Raw; [System.IO.File]::WriteAllText\\(\\(Resolve-Path ''Scripts\\\\Main-Switch.ps1''\\).Path, $content, [System.Text.UTF8Encoding]::new\\($true\\)\\)\")",
+<<<<<<< HEAD
+      "Bash(find . -type f \\\\\\(-name *.json -o -name *.csv -o -name *.txt \\\\\\))"
+=======
+      "Bash(find . -type f \\\\\\(-name *.json -o -name *.csv -o -name *.txt \\\\\\))",
+      "Bash(find /c/Users/Skyler/Documents/_Actual_Documents/PowerShell/Remediation-Script-Library/.claude/worktrees/sleepy-babbage -type f -name *[Tt]est*)",
+      "Bash(find /c/Users/Skyler/Documents/_Actual_Documents/PowerShell/Remediation-Script-Library/.claude/worktrees/sleepy-babbage -type f \\\\\\(-name *Tests.ps1 -o -name Test-*.ps1 \\\\\\))"
+>>>>>>> claude/sleepy-babbage
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell -NoProfile -File .claude/check-ascii.ps1",
+            "timeout": 30,
+            "statusMessage": "Checking for non-ASCII characters..."
+          }
+        ]
+      }
+    ]
+  }
+}

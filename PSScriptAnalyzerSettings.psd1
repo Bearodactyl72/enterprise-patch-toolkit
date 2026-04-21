@@ -1,0 +1,7 @@
+@{
+    ExcludeRules = @(
+        'PSUseDeclaredVarsMoreThanAssignments'
+	    'PSUseUsingScopeModifierInNewRunspaces'
+        'PSAvoidUsingWriteHost'
+    )
+}
