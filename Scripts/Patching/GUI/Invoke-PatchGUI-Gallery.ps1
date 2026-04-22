@@ -55,14 +55,18 @@ $script:PrefsPath  = Join-Path $script:PrefsDir 'preferences.json'
 $script:AllThemes  = Import-PowerShellDataFile -Path $script:ThemesPath
 $script:PatchGUI   = Join-Path $PSScriptRoot 'Invoke-PatchGUI.ps1'
 
-# Display order -- pairs Cobalt Slate dark with its Day sibling up top,
-# then the rest roughly in sample-number order, joke theme at the end.
+# Display order -- arranged for visual balance in a 4-column grid:
+#   - CobaltSlate + Day paired at top-left (identity pairing)
+#   - Light themes placed diagonally (R1C2 and R2C4) so they don't
+#     form a vertical stripe
+#   - Warm/cool accents alternate horizontally within each row
+#   - Teal/cyan adjacency broken in row 3 (red Tanium sits between
+#     Carbon Teal and Cyber Command)
+#   - CyberCommand closes the set (joke-theme-last)
 $script:DisplayOrder = @(
-    'CobaltSlate', 'CobaltSlateDay',
-    'TokyoNight', 'Meridian', 'UltraDarkViolet',
-    'Quartz', 'DarkForest', 'NavyAnalytics',
-    'Monochrome', 'TaniumInspired', 'CarbonTeal',
-    'CyberCommand'
+    'CobaltSlate',     'CobaltSlateDay', 'DarkForest',     'TokyoNight',
+    'UltraDarkViolet', 'NavyAnalytics',  'Meridian',       'Quartz',
+    'Monochrome',      'CarbonTeal',     'TaniumInspired', 'CyberCommand'
 )
 
 function Get-PatchPreferences {
@@ -98,6 +102,8 @@ function Set-PatchPreferences {
     Title="Invoke-Patch Theme Gallery"
     Width="1280" Height="820"
     MinWidth="960" MinHeight="600"
+    MaxHeight="900"
+    SizeToContent="Height"
     WindowStartupLocation="CenterScreen"
     Background="#0C0D14"
     FontFamily="Segoe UI">
@@ -164,7 +170,8 @@ function Set-PatchPreferences {
         <!-- Scrollable card grid -->
         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto"
                       HorizontalScrollBarVisibility="Disabled">
-            <WrapPanel Name="pnlCards" Orientation="Horizontal"/>
+            <WrapPanel Name="pnlCards" Orientation="Horizontal"
+                       HorizontalAlignment="Center"/>
         </ScrollViewer>
     </Grid>
 </Window>
@@ -179,6 +186,46 @@ $pnlCards = $window.FindName('pnlCards')
 # ============================================================================
 #  Build cards
 # ============================================================================
+
+# Build a Brush (solid or linear gradient) from a theme's token set.
+# Graceful cascade: use the *Stops array if present, else the *Color
+# solid if present, else the named fallback token (usually 'Blue').
+# Surfacing PipeStops / TitleStops / PipeColor on the gallery card
+# lets themes like Tanium-Inspired (red pipe) and Tokyo Night (cyan
+# to pink gradient) preview accurately instead of flattening to Blue.
+function New-ThemeBrush {
+    param(
+        [hashtable]$Theme,
+        [string]$StopsKey,
+        [string]$SolidKey,
+        [string]$FallbackKey,
+        [ValidateSet('Vertical','Horizontal')]
+        [string]$Orientation = 'Vertical'
+    )
+
+    if ($StopsKey -and $Theme.ContainsKey($StopsKey) -and $Theme[$StopsKey]) {
+        $brush = New-Object System.Windows.Media.LinearGradientBrush
+        if ($Orientation -eq 'Horizontal') {
+            $brush.StartPoint = [Windows.Point]::new(0, 0.5)
+            $brush.EndPoint   = [Windows.Point]::new(1, 0.5)
+        } else {
+            $brush.StartPoint = [Windows.Point]::new(0.5, 0)
+            $brush.EndPoint   = [Windows.Point]::new(0.5, 1)
+        }
+        $stops = @($Theme[$StopsKey])
+        for ($i = 0; $i -lt $stops.Count; $i++) {
+            $offset = if ($stops.Count -eq 1) { 0 } else { $i / ($stops.Count - 1) }
+            $color  = [Windows.Media.ColorConverter]::ConvertFromString($stops[$i])
+            $stop   = New-Object System.Windows.Media.GradientStop -ArgumentList $color, $offset
+            $brush.GradientStops.Add($stop) > $null
+        }
+        return $brush
+    }
+    if ($SolidKey -and $Theme.ContainsKey($SolidKey) -and $Theme[$SolidKey]) {
+        return [Windows.Media.BrushConverter]::new().ConvertFrom($Theme[$SolidKey])
+    }
+    return [Windows.Media.BrushConverter]::new().ConvertFrom($Theme[$FallbackKey])
+}
 
 function New-ThemeCard {
     param(
@@ -225,7 +272,14 @@ function New-ThemeCard {
     $bar.Width = 3
     $bar.Height = 32
     $bar.CornerRadius = [System.Windows.CornerRadius]::new(2)
-    $bar.Background = [Windows.Media.BrushConverter]::new().ConvertFrom($accentHex)
+    # Top accent bar surfaces the theme's brand pipe: PipeStops for
+    # themes with a vertical gradient (Tokyo Night), PipeColor for
+    # themes with a distinct brand color (Tanium red, Dark Forest
+    # copper), else the Green action accent. Vertical orientation
+    # matches the schema and the bar's own vertical geometry.
+    $bar.Background = New-ThemeBrush -Theme $Theme -StopsKey 'PipeStops' `
+                                     -SolidKey 'PipeColor' -FallbackKey 'Green' `
+                                     -Orientation 'Vertical'
     $bar.Margin = [System.Windows.Thickness]::new(0,2,10,0)
     $topPanel.Children.Add($bar) > $null
 
@@ -233,14 +287,14 @@ function New-ThemeCard {
 
     $name = New-Object System.Windows.Controls.TextBlock
     $name.Text = $Theme.Name
-    $name.FontSize = 15
+    $name.FontSize = 16
     $name.FontWeight = 'SemiBold'
     $name.Foreground = [Windows.Media.BrushConverter]::new().ConvertFrom($Theme.Text)
     $titlePanel.Children.Add($name) > $null
 
     $vibe = New-Object System.Windows.Controls.TextBlock
     $vibe.Text = $Theme.Vibe
-    $vibe.FontSize = 12
+    $vibe.FontSize = 11
     $vibe.Foreground = [Windows.Media.BrushConverter]::new().ConvertFrom($Theme.SubText)
     $vibe.Margin = [System.Windows.Thickness]::new(0,2,0,0)
     $vibe.TextWrapping = 'Wrap'
@@ -272,13 +326,45 @@ function New-ThemeCard {
     $pbar.VerticalAlignment = 'Center'
     $previewInner.Children.Add($pbar) > $null
 
-    $ptitle = New-Object System.Windows.Controls.TextBlock
-    $ptitle.Text = 'Invoke-Patch'
-    $ptitle.FontWeight = 'Bold'
-    $ptitle.FontSize = 13
-    $ptitle.Foreground = [Windows.Media.BrushConverter]::new().ConvertFrom($Theme.Blue)
-    $ptitle.VerticalAlignment = 'Center'
-    $previewInner.Children.Add($ptitle) > $null
+    # Title rendering honors TitleStyle so the mini preview matches
+    # what the theme will actually produce when selected:
+    #   'split'  -> "Invoke" dim + "Patch" bold, no hyphen
+    #              (Monochrome, Carbon Teal)
+    #   default  -> "Invoke-Patch" single TextBlock; uses TitleStops
+    #              vertical gradient if present (Tokyo Night), else
+    #              solid Theme.Blue (everyone else)
+    $titleStyle = if ($Theme.ContainsKey('TitleStyle')) { $Theme.TitleStyle } else { 'solid' }
+
+    if ($titleStyle -eq 'split') {
+        $dimHex = if ($Theme.ContainsKey('TitleDimColor')) { $Theme.TitleDimColor } else { $Theme.SubText }
+
+        $ptitleDim = New-Object System.Windows.Controls.TextBlock
+        $ptitleDim.Text = 'Invoke'
+        $ptitleDim.FontWeight = 'Normal'
+        $ptitleDim.FontSize = 13
+        $ptitleDim.Foreground = [Windows.Media.BrushConverter]::new().ConvertFrom($dimHex)
+        $ptitleDim.VerticalAlignment = 'Center'
+        $previewInner.Children.Add($ptitleDim) > $null
+
+        $ptitle = New-Object System.Windows.Controls.TextBlock
+        $ptitle.Text = 'Patch'
+        $ptitle.FontWeight = 'Bold'
+        $ptitle.FontSize = 13
+        $ptitle.Foreground = [Windows.Media.BrushConverter]::new().ConvertFrom($Theme.Blue)
+        $ptitle.VerticalAlignment = 'Center'
+        $previewInner.Children.Add($ptitle) > $null
+    }
+    else {
+        $ptitle = New-Object System.Windows.Controls.TextBlock
+        $ptitle.Text = 'Invoke-Patch'
+        $ptitle.FontWeight = 'Bold'
+        $ptitle.FontSize = 13
+        $ptitle.Foreground = New-ThemeBrush -Theme $Theme -StopsKey 'TitleStops' `
+                                            -FallbackKey 'Blue' `
+                                            -Orientation 'Vertical'
+        $ptitle.VerticalAlignment = 'Center'
+        $previewInner.Children.Add($ptitle) > $null
+    }
 
     $preview.Child = $previewInner
     $grid.Children.Add($preview) > $null
