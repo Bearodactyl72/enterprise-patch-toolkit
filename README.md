@@ -12,7 +12,7 @@ PowerShell 5.1 toolkit for concurrent patching, remote remediation, and software
 
 - A reusable `Invoke-RunspacePool` engine that fans patch deployment out to hundreds of machines with per-task timeouts, progress bars, and a uniform result schema.
 - A central `Main-Switch.ps1` configuration that reduces "add a new patchable app" to a single switch-case, and a content-aware three-way merge module (`Merge-MainSwitch`) that lets multiple admins maintain their own copies without drift.
-- An environment-config layer (`Config\Environment.psd1` + `RSL-Environment` module) that keeps all org-specific values -- domain names, file-share UNCs, trusted runner hostnames, CMDB tags -- out of the scripts themselves, so the whole repo drops into a new environment by editing one file.
+- An environment-config layer (`Config\Environment.psd1` + `RSL-Environment` module) that keeps all org-specific values (domain names, file-share UNCs, trusted runner hostnames, CMDB tags) out of the scripts themselves, so the whole repo drops into a new environment by editing one file.
 - Battle-tested against a known hazard of the platform: the double-serialization boundary introduced when `Invoke-RunspacePool` jobs call `Invoke-Command` into remote sessions. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the pattern.
 
 > **Portfolio note:** This is a sanitized copy of a toolkit I built and maintained in production on the Marine Corps Enterprise Network (MCEN), covering a multi-thousand-endpoint Windows fleet. Production values for the env-config layer above ship here as placeholders in [Config/Environment.example.psd1](Config/Environment.example.psd1).
@@ -45,7 +45,7 @@ If you are reviewing this for an interview and want the short tour, read these f
    ```
 
 3. Restart PowerShell. Your profile will now auto-import all modules and patching functions on every launch.
-4. Open `Run.ps1` in ISE -- it has ready-made invocations for the most useful scripts. Select the lines you need and press **F8** to run them.
+4. Open `Run.ps1` in ISE. It has ready-made invocations for the most useful scripts. Select the lines you need and press **F8** to run them.
 
 ### What Setup Does
 
@@ -98,7 +98,7 @@ $cfg     = Import-RSLEnvironment        # hashtable of the whole config
 $active  = Get-RSLActiveNetwork         # the entry matching $env:USERDNSDOMAIN, or $null
 ```
 
-`Import-RSLEnvironment` caches the hashtable in script scope, so repeat calls are free. `Get-RSLActiveNetwork` returns `$null` for workgroup / non-domain machines -- callers treat that as "skip domain-prefix stripping" rather than a hard failure.
+`Import-RSLEnvironment` caches the hashtable in script scope, so repeat calls are free. `Get-RSLActiveNetwork` returns `$null` for workgroup / non-domain machines. Callers treat that as "skip domain-prefix stripping" rather than a hard failure.
 
 ---
 
@@ -355,8 +355,8 @@ All modules are auto-imported by the PowerShell profile on startup. Each module 
 - Windows PowerShell 5.1 (Desktop edition)
 - Admin credentials with remote access to target machines
 - WinRM enabled on target machines
-- Network access to the patch repository -- UNC configured in `Config\Environment.psd1` under `Networks[].PatchShareUnc`
-- PSTools on your desktop (for `.msu` deployments -- Setup handles this on trusted runners)
+- Network access to the patch repository (UNC configured in `Config\Environment.psd1` under `Networks[].PatchShareUnc`)
+- PSTools on your desktop for `.msu` deployments (Setup handles this on trusted runners)
 
 ---
 
