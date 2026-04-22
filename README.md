@@ -93,7 +93,7 @@ $active  = Get-RSLActiveNetwork         # the entry matching $env:USERDNSDOMAIN,
 Remediation-Script-Library/
 |
 |-- Setup.ps1                     Entry point for first-time setup
-|-- Run.ps1                     Quick-launch scratch pad (F8 in ISE)
+|-- Run.ps1                       Quick-launch scratch pad (F8 in ISE)
 |
 |-- Config/                       Environment config (Environment.example.psd1)
 |-- Modules/                      Reusable PowerShell modules (auto-imported by profile)
@@ -110,19 +110,19 @@ Remediation-Script-Library/
 |   |-- Test-ConnectionAsJob/         Parallel connectivity testing via background jobs
 |   |-- Merge-MainSwitch/             Content-aware merge for Main-Switch.ps1 across admins
 |   |-- ConvertTo-ExitCodeComment/    Converts exit codes to human-readable comment strings
-|   |-- Copy-Log/                    Copies log files from remote machines to local folder
+|   |-- Copy-Log/                     Copies log files from remote machines to local folder
 |
 |-- Scripts/
 |   |-- Main-Switch.ps1           Central config: defines all patchable software
 |   |-- Patching/                 Core patching engine
-|   |   |-- Invoke-Patch.ps1      Main patching orchestrator (see below)
-|   |   |-- Invoke-Version.ps1    Version-check tool
-|   |   |-- Default.ps1           Standard deployment template
+|   |   |-- Invoke-Patch.ps1          Main patching orchestrator (see below)
+|   |   |-- Invoke-Version.ps1        Version-check tool
+|   |   |-- Default.ps1               Standard deployment template
 |   |   |-- Default-NoUninstall.ps1   In-place update template
-|   |   |-- Default-PSExec.ps1    PSExec-based deployment template
-|   |   |-- AppUninstalls/        Per-application uninstall scripts
-|   |   |   |-- Legacy/           Archived uninstall scripts (no longer actively used)
-|   |   |-- SwitchBackups/        Auto-generated backups of Main-Switch.ps1
+|   |   |-- Default-PSExec.ps1        PSExec-based deployment template
+|   |   |-- AppUninstalls/            Per-application uninstall scripts
+|   |   |   |-- Legacy/               Archived uninstall scripts (no longer actively used)
+|   |   |-- SwitchBackups/            Auto-generated backups of Main-Switch.ps1
 |   |-- Utility/
 |   |   |-- Cleanup/              Cache, profile, and registry cleanup
 |   |   |-- Discovery/            Software inventory and search tools
@@ -187,6 +187,24 @@ Invoke-Patch -TS Edge -TM WORKSTATION01
    - **Post-install verification** to confirm the new version
 
 6. **Results** -- Returns a table with columns: IP, ComputerName, Status, SoftwareName, Version, Compliant, NewVersion, ExitCode, Comment, AdminName, Date.
+
+```mermaid
+flowchart LR
+    A([Invoke-Patch<br/>-TargetSoftware Edge])
+    B[Config lookup<br/>Main-Switch.ps1]
+    C[List prep +<br/>validation]
+    D[Dynamic timeout<br/>from patch size]
+    E{{Invoke-RunspacePool<br/>per-machine fan-out}}
+    F[Ping]
+    G[DNS]
+    H[Version check<br/>Invoke-Command]
+    I["Copy patch<br/>(hash-verified)"]
+    J[Execute deploy<br/>script]
+    K[Post-install<br/>verify]
+    L([Uniform result<br/>table])
+    A --> B --> C --> D --> E
+    E --> F --> G --> H --> I --> J --> K --> L
+```
 
 ### Target Machine Lists
 

@@ -38,16 +38,13 @@ This is the single most load-bearing detail in the codebase, and the reason for 
 
 That means any value passed from the caller into the remote block crosses **two** serialization boundaries:
 
-```
-Caller (main runspace)
-   |
-   | AddArgument()   <-- boundary 1: runspace handoff
-   v
-Outer scriptblock (worker runspace)
-   |
-   | Invoke-Command -ArgumentList   <-- boundary 2: WinRM / CLIXML
-   v
-Remote scriptblock (PSSession on target)
+```mermaid
+flowchart TD
+    A["Caller<br/>(main runspace)"]
+    B["Outer scriptblock<br/>(worker runspace)"]
+    C["Remote scriptblock<br/>(PSSession on target)"]
+    A -->|"AddArgument()<br/>boundary 1: runspace handoff"| B
+    B -->|"Invoke-Command -ArgumentList<br/>boundary 2: WinRM / CLIXML"| C
 ```
 
 ### The Problem
