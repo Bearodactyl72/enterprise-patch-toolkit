@@ -19,4 +19,3 @@ Thumbs.db
 # Environment config (real values) - ship the .example only
 Config/Environment.psd1
 
-# Claude Code - track .claude/ settings and CLAUDE.md (do not ignore)
