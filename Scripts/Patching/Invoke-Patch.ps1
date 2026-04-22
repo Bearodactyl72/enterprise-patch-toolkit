@@ -1163,12 +1163,35 @@ function Invoke-Patch {
         $fileName = "$software" + "_" + "$dateOutput"
 
         # Output to Terminal
+        # Sort cascade surfaces the most actionable rows first:
+        #   1. Status      custom -- Isolated (rare + high-signal,
+        #                  often Tanium quarantine or WinRM down)
+        #                  first, Online bulk second, Offline tail.
+        #   2. NewVersion  DESC -- "No Change" ('N') sorts above
+        #                  numeric versions so failures bubble above
+        #                  successes within each Status block.
+        #   3. ExitCode    DESC -- within an outcome: 3010 > 0
+        #                  (reboot required is more actionable than
+        #                  clean success); 1618 > 1603 (transient
+        #                  "install in progress" before real fatal).
+        #   4. Version     ASC -- oldest-version grouping as the
+        #                  final outcome tiebreaker.
+        #   5. Comment     ASC -- stable ordering for matching text.
+        #   6. ComputerName ASC -- deterministic within-group order.
         $displayResults | Select-Object $displayProperties | Sort-Object -Property (
-            @{Expression = "Status"; Descending = $true },
-            @{Expression = "Version"; Descending = $false },
-            @{Expression = "NewVersion"; Descending = $true },
-            @{Expression = "ExitCode"; Descending = $false },
-            @{Expression = "Comment"; Descending = $false }
+            @{ Expression = {
+                switch ($_.Status) {
+                    'Isolated' { 1 }
+                    'Online'   { 2 }
+                    'Offline'  { 3 }
+                    default    { 99 }
+                }
+            }; Descending = $false },
+            @{ Expression = "NewVersion";   Descending = $true  },
+            @{ Expression = "ExitCode";     Descending = $true  },
+            @{ Expression = "Version";      Descending = $false },
+            @{ Expression = "Comment";      Descending = $false },
+            @{ Expression = "ComputerName"; Descending = $false }
         ) | Format-Table -AutoSize | Out-Host
 
         # Saves to Server Desktop

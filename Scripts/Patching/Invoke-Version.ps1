@@ -690,9 +690,25 @@ process {
         "Version", "Compliant", "NewVersion", "ExitCode", "Comment")
 
     # Output to Terminal only (no CSV - this is a situational awareness tool)
+    # Sort cascade parallels Invoke-Patch, minus the Patch-only keys
+    # (NewVersion / ExitCode / Comment don't apply to a version audit):
+    #   1. Status custom -- Isolated first (rare + high-signal,
+    #      often Tanium quarantine or WinRM down), Online bulk,
+    #      Offline tail.
+    #   2. Version ASC -- oldest-version machines up top (they're
+    #      the ones most likely needing attention).
+    #   3. ComputerName ASC -- deterministic within-group order.
     $sortedResults = $displayResults | Select-Object $displayProperties | Sort-Object -Property (
-        @{Expression = "Status"; Descending = $true},
-        @{Expression = "Version"; Descending = $false}
+        @{ Expression = {
+            switch ($_.Status) {
+                'Isolated' { 1 }
+                'Online'   { 2 }
+                'Offline'  { 3 }
+                default    { 99 }
+            }
+        }; Descending = $false },
+        @{ Expression = "Version";      Descending = $false },
+        @{ Expression = "ComputerName"; Descending = $false }
     )
     $sortedResults | Format-Table -AutoSize | Out-Host
 
