@@ -5,7 +5,7 @@
 function Get-ExitCodeComment {
     param([int]$Code)
     switch ($Code) {
-        0       { "Completed Successfully" }
+        0       { "Success" }
         1       { "Incorrect Function" }
         2       { "File cannot be found" }
         3       { "Cannot find the specified path" }

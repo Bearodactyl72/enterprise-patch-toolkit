@@ -1388,10 +1388,13 @@ function New-MockPatchResults {
 
             $exitCode = @(0, 0, 0, 0, 0, 3010, 1603, 1618)[$rng.Next(8)]
             $gotNew   = ($exitCode -eq 0 -or $exitCode -eq 3010)
-            $comment  = if ($exitCode -eq 3010) { 'Reboot required' }
-                        elseif ($exitCode -eq 1603) { 'Fatal error during installation' }
-                        elseif ($exitCode -eq 1618) { 'Another install in progress' }
-                        else { '' }
+            $comment  = switch ($exitCode) {
+                0       { 'Success' }
+                3010    { 'Reboot required' }
+                1603    { 'Fatal error during installation' }
+                1618    { 'Another install in progress' }
+                default { '' }
+            }
 
             $results += [PSCustomObject]@{
                 IPAddress    = $ip
