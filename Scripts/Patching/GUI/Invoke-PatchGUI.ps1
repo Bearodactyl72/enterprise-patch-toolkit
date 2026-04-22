@@ -1806,12 +1806,25 @@ $btnCancel.Add_Click({
 $btnSort.Add_Click({
     if ($script:resultData.Count -eq 0) { return }
 
+    # Mirrors Invoke-Patch's Format-Table cascade so the GUI button
+    # output matches a fresh CLI run. Version-mode results flow
+    # through the same cascade cleanly: NewVersion / ExitCode /
+    # Comment are null in Version mode and Sort-Object falls
+    # straight through to Version + ComputerName.
     $sorted = @($script:resultData | Sort-Object -Property (
-        @{Expression = "Status";     Descending = $true },
-        @{Expression = "Version";    Descending = $false },
-        @{Expression = "NewVersion"; Descending = $true },
-        @{Expression = "ExitCode";   Descending = $false },
-        @{Expression = "Comment";    Descending = $false }
+        @{ Expression = {
+            switch ($_.Status) {
+                'Isolated' { 1 }
+                'Online'   { 2 }
+                'Offline'  { 3 }
+                default    { 99 }
+            }
+        }; Descending = $false },
+        @{ Expression = "NewVersion";   Descending = $true  },
+        @{ Expression = "ExitCode";     Descending = $true  },
+        @{ Expression = "Version";      Descending = $false },
+        @{ Expression = "Comment";      Descending = $false },
+        @{ Expression = "ComputerName"; Descending = $false }
     ))
 
     $dgResults.Items.Clear()
