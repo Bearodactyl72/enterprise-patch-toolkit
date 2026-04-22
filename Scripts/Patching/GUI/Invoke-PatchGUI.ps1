@@ -108,12 +108,12 @@ $script:activeTheme    = $script:AllThemes[$script:activeThemeKey]
 # ============================================================================
 #  Theme overrides
 # ============================================================================
-# Some themes (joke themes, heavy customizations) have personality that
-# the canonical XAML template cannot represent -- different fonts, custom
-# button labels, alternate section-header text, etc. Those themes get a
-# standalone XAML file in Scripts/Patching/ThemeOverrides/<ThemeKey>.ps1
-# that we delegate to entirely. The canonical flow below is only used
-# for themes without an override.
+# Some themes have personality that the canonical XAML template can't
+# represent -- different fonts, custom button labels, alternate
+# section-header text, etc. Those themes get a standalone XAML file
+# in Scripts/Patching/ThemeOverrides/<ThemeKey>.ps1 that we delegate
+# to entirely. The canonical flow below is only used for themes
+# without an override.
 
 $script:OverrideDir  = Join-Path $PSScriptRoot 'ThemeOverrides'
 $script:OverridePath = Join-Path $script:OverrideDir "$($script:activeThemeKey).ps1"

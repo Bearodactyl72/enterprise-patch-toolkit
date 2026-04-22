@@ -292,7 +292,7 @@
 
     CyberCommand = @{
         Name       = 'CYBER COMMAND'
-        Vibe       = 'Movie-hacker aesthetic'
+        Vibe       = 'Neon cyan on pure black'
         Bg         = '#000000'
         Surface    = '#080810'
         Overlay    = '#101018'

@@ -62,7 +62,9 @@ $script:PatchGUI   = Join-Path $PSScriptRoot 'Invoke-PatchGUI.ps1'
 #   - Warm/cool accents alternate horizontally within each row
 #   - Teal/cyan adjacency broken in row 3 (red Tanium sits between
 #     Carbon Teal and Cyber Command)
-#   - CyberCommand closes the set (joke-theme-last)
+#   - CyberCommand anchors the bottom-right corner -- its
+#     high-contrast neon-on-black is the loudest theme in the set
+#     and works as a visual bookend opposite Cobalt Slate.
 $script:DisplayOrder = @(
     'CobaltSlate',     'CobaltSlateDay', 'DarkForest',     'TokyoNight',
     'UltraDarkViolet', 'NavyAnalytics',  'Meridian',       'Quartz',
