@@ -368,4 +368,4 @@ All modules are auto-imported by the PowerShell profile on startup. Each module 
 
 ## Note on Reuse
 
-This code was developed for use on a US Government network. Accordingly, this repository is published **for portfolio review purposes only**. No license to fork, reuse, redistribute, or derive from this code is granted or implied. If you are interested in reuse, please contact me directly and I will work through the appropriate channels.
+This code was developed for use on a US Government network. Accordingly, this repository is published **for portfolio review purposes only**. No license to fork, reuse, redistribute, or derive from this code is granted or implied.
