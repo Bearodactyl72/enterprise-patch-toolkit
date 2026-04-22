@@ -846,15 +846,21 @@ function New-MockPatchResults {
     [CmdletBinding()]
     param(
         [string]$SoftwareName,
-        [int]$Count = 15
+        [int]$Count = 15,
+        [string[]]$ComputerName
     )
+
+    # If caller supplied an explicit hostname list, drive the row count
+    # from it and render those names verbatim. Otherwise fall back to
+    # synthesized PC001-style names.
+    $useProvidedNames = ($null -ne $ComputerName) -and (@($ComputerName).Count -gt 0)
+    if ($useProvidedNames) { $Count = @($ComputerName).Count }
 
     $rng       = New-Object System.Random
     $date      = Get-Date -Format 'yyyy/MM/dd HH:mm'
     $user      = $env:USERNAME
     $oldVers   = @('119.0.6045.123', '120.0.6099.71', '121.0.6167.85', '122.0.6261.57')
     $newVer    = '126.0.6478.127'
-    $comments  = @('', 'Reboot required', 'Task Stopped', 'Install succeeded', 'Task Failed: Access denied')
     $prefixes  = @('PC', 'WS', 'PC', 'PC', 'DT', 'LT')
 
     # Auto-detection mix: mostly Online, with occasional Offline and rare
@@ -864,8 +870,12 @@ function New-MockPatchResults {
     $results = @()
     for ($i = 1; $i -le $Count; $i++) {
         $status  = $statuses[$rng.Next($statuses.Count)]
-        $prefix  = $prefixes[$rng.Next($prefixes.Count)]
-        $machine = "$prefix$($i.ToString('D3'))"
+        $machine = if ($useProvidedNames) {
+            $ComputerName[$i - 1]
+        } else {
+            $prefix = $prefixes[$rng.Next($prefixes.Count)]
+            "$prefix$($i.ToString('D3'))"
+        }
         $octA    = $rng.Next(10, 11)
         $octB    = $rng.Next(1, 5)
         $octC    = $rng.Next(1, 255)
@@ -889,10 +899,13 @@ function New-MockPatchResults {
             $oldVer   = $oldVers[$rng.Next($oldVers.Count)]
             $exitCode = @(0, 0, 0, 0, 0, 3010, 1603, 1618)[$rng.Next(8)]
             $gotNew   = ($exitCode -eq 0 -or $exitCode -eq 3010)
-            $comment  = if ($exitCode -eq 3010) { 'Reboot required' }
-                        elseif ($exitCode -eq 1603) { 'Fatal error during installation' }
-                        elseif ($exitCode -eq 1618) { 'Another install in progress' }
-                        else { '' }
+            $comment  = switch ($exitCode) {
+                0       { 'Success' }
+                3010    { 'Reboot required' }
+                1603    { 'Fatal error during installation' }
+                1618    { 'Another install in progress' }
+                default { '' }
+            }
 
             # Isolated machines have null IPAddress (ping didn't return one).
             $ip = if ($status -eq 'Isolated') { $null } else { "$octA.$octB.$octC.$i" }
@@ -904,7 +917,10 @@ function New-MockPatchResults {
                 SoftwareName = $SoftwareName
                 Version      = $oldVer
                 Compliant    = $false
-                NewVersion   = if ($gotNew) { $newVer } else { $oldVer }
+                # Match real Invoke-Patch: when the install doesn't change
+                # the detected version (attempt failed), the cmdlet rewrites
+                # NewVersion to "No Change".
+                NewVersion   = if ($gotNew) { $newVer } else { 'No Change' }
                 ExitCode     = $exitCode
                 Comment      = $comment
                 AdminName    = $user
@@ -978,7 +994,28 @@ $btnRun.Add_Click({
     # ----------------------------------------------------------------
     if ($DryRun) {
 
-        $lblStatus.Text         = "[DryRun] Simulating $selectedSoftware patching..."
+        # Resolve the Machine field into an explicit hostname list so
+        # the mock generator renders the user's targets verbatim.
+        # Mirrors the live-mode path / single-machine handling below.
+        $script:dryRunNames = @()
+        $dryText = $txtMachine.Text.Trim()
+        if ($dryText) {
+            $isPath = ($dryText -match '[\\/]') -or ($dryText -match '\.[a-zA-Z]+$')
+            if ($isPath -and (Test-Path $dryText)) {
+                $script:dryRunNames = @(
+                    Get-Content -Path $dryText -ErrorAction SilentlyContinue |
+                        Where-Object { $_ -and $_ -notmatch '^\s*#' } |
+                        ForEach-Object { $_.Trim() } |
+                        Where-Object { $_ }
+                )
+            }
+            elseif (-not $isPath) {
+                $script:dryRunNames = @($dryText)
+            }
+        }
+
+        $dryCount = if ($script:dryRunNames.Count) { $script:dryRunNames.Count } else { 15 }
+        $lblStatus.Text         = "[DryRun] Simulating $selectedSoftware patching on $dryCount machines..."
         $prgBar.IsIndeterminate = $true
 
         $script:dryRunTimer = New-Object System.Windows.Threading.DispatcherTimer
@@ -1001,6 +1038,9 @@ $btnRun.Add_Click({
                 $script:dryRunTimer.Stop()
 
                 $mockParams = @{ SoftwareName = $script:selectedSoftware; Count = 15 }
+                if ($script:dryRunNames -and $script:dryRunNames.Count -gt 0) {
+                    $mockParams.ComputerName = $script:dryRunNames
+                }
                 $script:resultData = @(New-MockPatchResults @mockParams)
                 Complete-RunWithResults -Results $script:resultData
                 $lblStatus.Text = "[DryRun] Complete - $($script:resultData.Count) simulated results"
@@ -1196,8 +1236,15 @@ $btnTheme.Add_Click({
         return
     }
 
-    Start-Process -FilePath 'powershell.exe' `
-                  -ArgumentList '-NoProfile', '-File', $galleryPath
+    # Forward session switches so they survive the Gallery -> main-GUI
+    # relaunch cycle. -DryRun must not silently drop when the user picks
+    # a new theme mid-session; -Mode reads the live toggle state so if
+    # the user flipped to Version before opening the Gallery, they come
+    # back in Version.
+    $argList = @('-NoProfile', '-File', $galleryPath)
+    if ($DryRun)        { $argList += '-DryRun' }
+    if ($script:mode)   { $argList += @('-Mode', $script:mode) }
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $argList
     $window.Close()
 })
 
@@ -1209,12 +1256,25 @@ $btnTheme.Add_Click({
 $btnSort.Add_Click({
     if ($script:resultData.Count -eq 0) { return }
 
+    # Mirrors Invoke-Patch's Format-Table cascade so the GUI button
+    # output matches a fresh CLI run. Version-mode results flow
+    # through the same cascade cleanly: NewVersion / ExitCode /
+    # Comment are null in Version mode and Sort-Object falls
+    # straight through to Version + ComputerName.
     $sorted = @($script:resultData | Sort-Object -Property (
-        @{Expression = "Status";     Descending = $true },
-        @{Expression = "Version";    Descending = $false },
-        @{Expression = "NewVersion"; Descending = $true },
-        @{Expression = "ExitCode";   Descending = $false },
-        @{Expression = "Comment";    Descending = $false }
+        @{ Expression = {
+            switch ($_.Status) {
+                'Isolated' { 1 }
+                'Online'   { 2 }
+                'Offline'  { 3 }
+                default    { 99 }
+            }
+        }; Descending = $false },
+        @{ Expression = "NewVersion";   Descending = $true  },
+        @{ Expression = "ExitCode";     Descending = $true  },
+        @{ Expression = "Version";      Descending = $false },
+        @{ Expression = "Comment";      Descending = $false },
+        @{ Expression = "ComputerName"; Descending = $false }
     ))
 
     $dgResults.Items.Clear()
