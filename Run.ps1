@@ -1,11 +1,23 @@
 # Run.ps1 -- Quick-launch scratch pad for script invocations
-# Open in ISE, F5 to load functions, edit args, select the lines you need, F8 to run selection.
 #
-# $TargetMachines is loaded automatically by the TargetMachines module.
-# If you update the list file mid-session, run:  Import-TargetMachines
-# To paste a list interactively, run:            Enter-TargetMachines
+# Workflow:
+#   1. Open this file in PowerShell ISE.
+#   2. Press F5 to dot-source all the standalone scripts below (loading
+#      their functions into the session) and hit the break statement.
+#   3. Edit the arguments in the example blocks below to fit your target.
+#   4. Select the line(s) you want to run and press F8.
+#
+# $TargetMachines is loaded automatically by the TargetMachines module
+# from Desktop\Lists\Target_Machines.txt when the profile starts.
+#   - To reload after updating the list file:   Import-TargetMachines
+#   - To paste a list interactively:            Enter-TargetMachines
 
-$ScriptRoot = "$env:USERPROFILE\Desktop\Remediation-Script-Library"
+$ScriptRoot = $PSScriptRoot
+if (-not $ScriptRoot) {
+    # Running selected lines in ISE loses $PSScriptRoot; fall back to the
+    # currently-open file's directory when ISE is the host.
+    if ($psISE) { $ScriptRoot = Split-Path -Path $psISE.CurrentFile.FullPath }
+}
 . "$ScriptRoot\Scripts\Utility\Discovery\Get-LoggedInUser.ps1"
 . "$ScriptRoot\Scripts\Utility\Discovery\Find-PatchContent.ps1"
 . "$ScriptRoot\Scripts\Utility\Discovery\Get-StaleAsset.ps1"

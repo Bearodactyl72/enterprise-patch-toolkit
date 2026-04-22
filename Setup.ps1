@@ -1,5 +1,43 @@
 ﻿# DOTS formatting comment
 
+<#
+    .SYNOPSIS
+        First-time setup - installs profiles, maps the patch share, unblocks
+        downloaded files, and seeds %APPDATA%\Patching paths.
+    .DESCRIPTION
+        Run this once after cloning or unpacking the repo. It:
+
+            1. Copies Profiles\Microsoft.PowerShell_profile.ps1 and
+               Microsoft.PowerShellISE_profile.ps1 into the user's
+               Documents\WindowsPowerShell folder so they auto-load on shell
+               start. Skipped if the file sizes already match.
+
+            2. Reads Config\Environment.psd1 (or Environment.example.psd1 on
+               first clone) to pick up domain FQDNs, file shares, and the
+               trusted-runner host pattern.
+
+            3. Writes %APPDATA%\Patching\Paths.txt so the profile knows
+               where the repo lives.
+
+            4. Maps the active network's PatchShareUnc to the configured
+               drive letter (default M:).
+
+            5. Syncs the local Main-Switch.ps1 against the central copy
+               when the share is reachable.
+
+            6. On trusted runner hosts, copies PSTools to the desktop
+               (required for .msu deployments).
+
+            7. Unblocks all .ps1 files in the tree (removes the MOTW flag
+               that Windows adds to files downloaded from source control
+               or email).
+
+        Safe to re-run. Each step is idempotent and skips work when the
+        target is already current.
+
+        Written by Skyler Werner
+#>
+
 # Pulls powershell script root
 if ($psISE) {
     $path = Split-Path -Path $psISE.CurrentFile.FullPath
