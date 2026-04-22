@@ -105,7 +105,7 @@ $active  = Get-RSLActiveNetwork         # the entry matching $env:USERDNSDOMAIN,
 ## Repository Structure
 
 ```
-Remediation-Script-Library/
+enterprise-patch-toolkit/
 |
 |-- Setup.ps1                     Entry point for first-time setup
 |-- Run.ps1                       Quick-launch scratch pad (F8 in ISE)
@@ -295,7 +295,7 @@ Standalone scripts in `Scripts\Utility\` are organized by purpose. Open them ind
 | **Cleanup** | Clear ConfigMgr cache, remove stale user profiles, remove stale registry uninstall keys, clean orphaned user registry keys |
 | **Discovery** | Find patch content in ccmcache, get logged-in users, query registry, find installed software, Dell BIOS settings, test remote access |
 | **Maintenance** | Repair machine health (SFC/DISM/SCCM), repair Windows Update agent, restart machines, enable WinRM, renew DNS, install drivers |
-| **Remediation** | Log4J fixes, Tanium client verification, DBX updates, bulk uninstalls (Brave, Flash, Teams, Autodesk, etc.) |
+| **Remediation** | Log4J remediation, Tanium quarantine verification, MSI uninstall repair, user-scope software uninstalls |
 
 ---
 
@@ -320,12 +320,10 @@ The module performs three-way merge at the switch-case level, so independent edi
 
 ## Exporting / Importing the Library
 
-The `Import-Export\` folder contains scripts for packaging the library for transfer (e.g., email):
+The `Import-Export\` folder contains scripts for packaging the library for transfer to air-gapped or mail-restricted systems where cloning from source control is not an option:
 
-- **Export-Package.ps1** -- Zips the entire library with `.txt` extensions (bypasses email filters), used for DOTS.
-- **Export-Package-Flat.ps1** -- Flattens the tree structure with a manifest file for reconstruction, used for Outlook.
-- **Import-Package.ps1** -- Restores a ZIP package and removes `.txt` extensions.
-- **Import-Package-Flat.ps1** -- Reconstructs the tree from a flat export using the manifest. Supports `-WhatIf` and `-Undo`.
+- **Export-Package.ps1** -- Zips the entire library with `.txt` extensions on script files so the archive survives attachment filters that block executables. Supports delta exports: subsequent runs diff SHA-256 hashes against a reference manifest and ship only changed files.
+- **Import-Package.ps1** -- Restores a package produced by `Export-Package.ps1`, restoring original extensions and directory structure.
 
 ---
 
