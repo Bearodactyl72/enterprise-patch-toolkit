@@ -248,6 +248,7 @@
         Red            = '#9C9C9C'
         TitleStyle     = 'split'
         TitleDimColor  = '#BEBEBE'
+        ToggleOnBg     = '#9C9C9C'   # mid-gray track so the light knob stays visible
         ToggleOnBorder = '#FFFFFF'
     }
 
