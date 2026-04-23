@@ -41,114 +41,14 @@ Add-Type -AssemblyName System.Windows.Forms
 
 
 # ============================================================================
-#  Parse Main-Switch for software names
+#  Shared helpers
 # ============================================================================
+# Get-MainSwitchNames, Get-MainSwitchListPaths, New-MockPatchResults,
+# ConvertTo-DisplayRow, and the preference helpers live in
+# Invoke-PatchGUI.Shared.ps1 (one directory up). That keeps this
+# override from silently drifting when canonical behavior changes.
 
-function Get-MainSwitchNames {
-    [CmdletBinding()]
-    param()
-
-    # Find Main-Switch.ps1 relative to this script or via $scriptPath.
-    # Skip candidates whose base path is null so Join-Path doesn't throw
-    # when the override is invoked outside a profile-loaded session
-    # ($scriptPath is set by the admin's profile in normal use).
-    # Override lives at Scripts/Patching/GUI/ThemeOverrides/;
-    # Main-Switch.ps1 is at Scripts/ -- three levels up.
-    $candidates = @()
-    if ($PSScriptRoot) { $candidates += (Join-Path $PSScriptRoot '..\..\..\Main-Switch.ps1') }
-    if ($scriptPath)   { $candidates += (Join-Path $scriptPath 'Main-Switch.ps1') }
-
-    $mainSwitchPath = $null
-    foreach ($c in $candidates) {
-        if (Test-Path $c) {
-            $mainSwitchPath = (Resolve-Path $c).Path
-            break
-        }
-    }
-
-    if (-not $mainSwitchPath) {
-        Write-Warning "Could not find Main-Switch.ps1"
-        return @()
-    }
-
-    # Parse the switch case names via regex
-    $lines = Get-Content -Path $mainSwitchPath -Encoding Default
-    $names = @()
-    foreach ($line in $lines) {
-        if ($line -match '^\s*"([^"]+)"\s*\{') {
-            $names += $Matches[1]
-        }
-    }
-
-    return ($names | Sort-Object)
-}
-
-
-function Get-MainSwitchListPaths {
-    <#
-        .SYNOPSIS
-            Returns a hashtable mapping each software name to its listPath.
-        .DESCRIPTION
-            Parses Main-Switch.ps1 line by line to find each case header
-            ("Name" {) and the first $listPath assignment inside it.
-            Expands $listPathRoot and $env: variables.
-
-            Avoids dot-sourcing Main-Switch entirely -- dot-sourcing fails
-            in the GUI runspace because Main-Switch calls Get-Command
-            against per-software patch scripts that do not resolve in a
-            fresh context. A silent catch would swallow that error and
-            produce an empty map, so the Machine field never populated.
-    #>
-    [CmdletBinding()]
-    param()
-
-    # Skip candidates whose base path is null so Join-Path doesn't throw
-    # when the script is launched outside a profile-loaded session.
-    # Override lives at Scripts/Patching/GUI/ThemeOverrides/;
-    # Main-Switch.ps1 is at Scripts/ -- three levels up.
-    $candidates = @()
-    if ($PSScriptRoot) { $candidates += (Join-Path $PSScriptRoot '..\..\..\Main-Switch.ps1') }
-    if ($scriptPath)   { $candidates += (Join-Path $scriptPath 'Main-Switch.ps1') }
-
-    $mainSwitchPath = $null
-    foreach ($c in $candidates) {
-        if (Test-Path $c) {
-            $mainSwitchPath = (Resolve-Path $c).Path
-            break
-        }
-    }
-
-    if (-not $mainSwitchPath) { return @{} }
-
-    # Context variable referenced by listPath values in Main-Switch.
-    # ExpandString below resolves $listPathRoot against this scope.
-    $listPathRoot = "$env:USERPROFILE\Desktop\Lists"
-
-    $map         = @{}
-    $currentCase = $null
-
-    foreach ($line in (Get-Content -Path $mainSwitchPath -Encoding Default)) {
-        # Case header: indented "Name" followed by opening brace
-        if ($line -match '^\s*"([^"]+)"\s*\{') {
-            $currentCase = $Matches[1]
-            continue
-        }
-
-        # First $listPath assignment inside an active case
-        if ($currentCase -and
-            $line -match '^\s*\$listPath\s*=\s*"([^"]+)"') {
-            $rawPath = $Matches[1]
-            try {
-                $expanded = $ExecutionContext.InvokeCommand.ExpandString($rawPath)
-                $map[$currentCase] = $expanded
-            }
-            catch { }
-            $currentCase = $null   # done; ignore further assignments in this case
-        }
-    }
-
-    return $map
-}
+. (Join-Path $PSScriptRoot '..\Invoke-PatchGUI.Shared.ps1')
 
 
 # ============================================================================
@@ -925,115 +825,38 @@ $btnBrowse.Add_Click({
 
 
 # ============================================================================
-#  DryRun: Mock data generator
-# ============================================================================
-
-function New-MockPatchResults {
-    [CmdletBinding()]
-    param(
-        [string]$SoftwareName,
-        [int]$Count = 15,
-        [string[]]$ComputerName
-    )
-
-    # If caller supplied an explicit hostname list, drive the row count
-    # from it and render those names verbatim. Otherwise fall back to
-    # synthesized PC001-style names.
-    $useProvidedNames = ($null -ne $ComputerName) -and (@($ComputerName).Count -gt 0)
-    if ($useProvidedNames) { $Count = @($ComputerName).Count }
-
-    $rng       = New-Object System.Random
-    $date      = Get-Date -Format 'yyyy/MM/dd HH:mm'
-    $user      = $env:USERNAME
-    $oldVers   = @('119.0.6045.123', '120.0.6099.71', '121.0.6167.85', '122.0.6261.57')
-    $newVer    = '126.0.6478.127'
-    $prefixes  = @('PC', 'WS', 'PC', 'PC', 'DT', 'LT')
-
-    # Auto-detection mix: mostly Online, with occasional Offline and rare
-    # Isolated (machine reached via WinRM-port fallback after ICMP failure).
-    $statuses = @('Online','Online','Online','Online','Online','Online','Online','Online','Offline','Isolated')
-
-    $results = @()
-    for ($i = 1; $i -le $Count; $i++) {
-        $status  = $statuses[$rng.Next($statuses.Count)]
-        $machine = if ($useProvidedNames) {
-            $ComputerName[$i - 1]
-        } else {
-            $prefix = $prefixes[$rng.Next($prefixes.Count)]
-            "$prefix$($i.ToString('D3'))"
-        }
-        $octA    = $rng.Next(10, 11)
-        $octB    = $rng.Next(1, 5)
-        $octC    = $rng.Next(1, 255)
-
-        if ($status -eq 'Offline') {
-            $results += [PSCustomObject]@{
-                IPAddress    = $null
-                ComputerName = $machine
-                Status       = 'Offline'
-                SoftwareName = $SoftwareName
-                Version      = $null
-                Compliant    = $null
-                NewVersion   = $null
-                ExitCode     = $null
-                Comment      = 'Ping failed'
-                AdminName    = $user
-                Date         = $date
-            }
-        }
-        else {
-            $oldVer   = $oldVers[$rng.Next($oldVers.Count)]
-            $exitCode = @(0, 0, 0, 0, 0, 3010, 1603, 1618)[$rng.Next(8)]
-            $gotNew   = ($exitCode -eq 0 -or $exitCode -eq 3010)
-            $comment  = switch ($exitCode) {
-                0       { 'Success' }
-                3010    { 'Reboot required' }
-                1603    { 'Fatal error during installation' }
-                1618    { 'Another install in progress' }
-                default { '' }
-            }
-
-            # Isolated machines have null IPAddress (ping didn't return one).
-            $ip = if ($status -eq 'Isolated') { $null } else { "$octA.$octB.$octC.$i" }
-
-            $results += [PSCustomObject]@{
-                IPAddress    = $ip
-                ComputerName = $machine
-                Status       = $status
-                SoftwareName = $SoftwareName
-                Version      = $oldVer
-                Compliant    = $false
-                # Match real Invoke-Patch: when the install doesn't change
-                # the detected version (attempt failed), the cmdlet rewrites
-                # NewVersion to "No Change".
-                NewVersion   = if ($gotNew) { $newVer } else { 'No Change' }
-                ExitCode     = $exitCode
-                Comment      = $comment
-                AdminName    = $user
-                Date         = $date
-            }
-        }
-    }
-
-    return $results
-}
-
-
-# ============================================================================
 #  Helper: Populate results grid and update footer/progress
 # ============================================================================
 
 function Complete-RunWithResults {
     param([array]$Results)
 
+    # Flatten array-valued display properties so the WPF grid doesn't
+    # render them as "System.Object[]".
+    $displayRows = @($Results | ConvertTo-DisplayRow)
+
     $dgResults.Items.Clear()
-    foreach ($row in $Results) {
+    foreach ($row in $displayRows) {
         $dgResults.Items.Add($row) > $null
     }
 
-    $total   = $Results.Count
-    $online  = @($Results | Where-Object { $_.Status -eq 'Online' }).Count
-    $offline = @($Results | Where-Object { $_.Status -eq 'Offline' }).Count
+    # Surface the actual error if the runspace produced an ERROR/Failed row.
+    # The Comment carries the exception message from Invoke-Patch/Version;
+    # pop it in a MessageBox so the admin can tell what broke instead of
+    # staring at a single "ERROR | Failed" row.
+    $errorRow = $displayRows | Where-Object {
+        $_.ComputerName -eq 'ERROR' -and $_.Status -eq 'Failed'
+    } | Select-Object -First 1
+    if ($errorRow) {
+        $msg = if ($errorRow.Comment) { [string]$errorRow.Comment } else { '(no details)' }
+        [System.Windows.MessageBox]::Show(
+            "The background cmdlet threw an exception:`n`n$msg",
+            "Invoke-$($script:mode) Error", "OK", "Error") > $null
+    }
+
+    $total   = $displayRows.Count
+    $online  = @($displayRows | Where-Object { $_.Status -eq 'Online' }).Count
+    $offline = @($displayRows | Where-Object { $_.Status -eq 'Offline' }).Count
     $lblResultCount.Text = "$total machines  |  $online online  |  $offline offline"
 
     $prgBar.IsIndeterminate = $false
@@ -1123,7 +946,11 @@ $btnRun.Add_Click({
                 # Done - generate and display mock results
                 $script:dryRunTimer.Stop()
 
-                $mockParams = @{ SoftwareName = $script:selectedSoftware; Count = 15 }
+                $mockParams = @{
+                    SoftwareName = $script:selectedSoftware
+                    Mode         = $script:mode
+                    Count        = 15
+                }
                 if ($script:dryRunNames -and $script:dryRunNames.Count -gt 0) {
                     $mockParams.ComputerName = $script:dryRunNames
                 }

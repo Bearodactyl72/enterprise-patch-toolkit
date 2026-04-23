@@ -46,12 +46,15 @@ Add-Type -AssemblyName WindowsBase
 
 
 # ============================================================================
-#  Load themes + preference helpers
+#  Load themes + shared helpers
 # ============================================================================
+# Invoke-PatchGUI.Shared.ps1 defines Get-PatchPreferences /
+# Set-PatchPreferences and sets $script:PrefsDir / $script:PrefsPath
+# into our scope.
+
+. (Join-Path $PSScriptRoot 'Invoke-PatchGUI.Shared.ps1')
 
 $script:ThemesPath = Join-Path $PSScriptRoot 'Themes.psd1'
-$script:PrefsDir   = Join-Path $env:APPDATA 'Patching'
-$script:PrefsPath  = Join-Path $script:PrefsDir 'preferences.json'
 $script:AllThemes  = Import-PowerShellDataFile -Path $script:ThemesPath
 $script:PatchGUI   = Join-Path $PSScriptRoot 'Invoke-PatchGUI.ps1'
 
@@ -70,28 +73,6 @@ $script:DisplayOrder = @(
     'UltraDarkViolet', 'NavyAnalytics',  'Meridian',       'Quartz',
     'Monochrome',      'CarbonTeal',     'TaniumInspired', 'CyberCommand'
 )
-
-function Get-PatchPreferences {
-    if (-not (Test-Path $script:PrefsPath)) { return @{} }
-    try {
-        $raw = Get-Content -Raw -Path $script:PrefsPath -Encoding UTF8
-        $obj = $raw | ConvertFrom-Json
-        $h = @{}
-        foreach ($p in $obj.PSObject.Properties) { $h[$p.Name] = $p.Value }
-        return $h
-    } catch {
-        return @{}
-    }
-}
-
-function Set-PatchPreferences {
-    param([hashtable]$Preferences)
-    if (-not (Test-Path $script:PrefsDir)) {
-        New-Item -ItemType Directory -Path $script:PrefsDir -Force | Out-Null
-    }
-    $Preferences | ConvertTo-Json | Set-Content -Path $script:PrefsPath -Encoding UTF8
-}
-
 
 # ============================================================================
 #  Build XAML
