@@ -18,6 +18,53 @@ contrast, readability, color discipline, and gradient use.
   file if it exists.
 - Gallery (`Invoke-PatchGUI-Gallery.ps1`) shows all themes as clickable
   cards; clicking one saves the selection and relaunches production.
+- Shared logic used by more than one entry point lives in
+  `Invoke-PatchGUI.Shared.ps1`. Every GUI that matters dot-sources it.
+
+## The shared module rule
+
+Any helper used by more than one GUI entry point lives in
+`Invoke-PatchGUI.Shared.ps1`. XAML and named-control code stays local
+to each entry point. This came out of the first CyberCommand override:
+the override was a fork of the canonical GUI, and every fix to the
+canonical had to be copy-pasted in or the override silently drifted.
+
+What belongs in the shared file:
+
+- Preferences I/O (`Get-PatchPreferences` / `Set-PatchPreferences`)
+- Main-Switch discovery (`Get-MainSwitchNames` / `Get-MainSwitchListPaths`)
+- DryRun mock data (`New-MockPatchResults`)
+- Display-row flattening (`ConvertTo-DisplayRow`)
+- Anything else that is pure logic and would be copy-pasted into a
+  second GUI file
+
+What does NOT belong:
+
+- XAML strings (every entry point has its own visual identity)
+- Event handlers tied to named WPF controls
+- Functions that read or write `$script:mode` or other entry-point state
+- Anything that imports the palette -- theme resolution is a
+  production-GUI concern, not a shared one
+
+### Why this works
+
+The shared file lives at `GUI/`. Callers dot-source it from different
+depths (`GUI/`, `GUI/ThemeOverrides/`). Because `$PSScriptRoot` inside a
+function resolves to the file where the function was defined, helpers
+in the shared file always see `GUI/` as their anchor. `Main-Switch.ps1`
+is `..\..\Main-Switch.ps1` from there, regardless of which caller
+dot-sourced. One canonical path, no per-caller path math.
+
+Top-level code in the shared file runs in the caller's script scope on
+dot-source, so setting `$script:PrefsDir` / `$script:PrefsPath` at the
+top of the shared file populates those vars in every caller without
+each caller having to repeat the two lines.
+
+### When to add a new helper
+
+If you are about to copy-paste a helper from the canonical GUI into a
+second entry point, stop -- move it into the shared file instead.
+Single-entry-point helpers stay local until the second caller appears.
 
 ## The SubText Trap
 
