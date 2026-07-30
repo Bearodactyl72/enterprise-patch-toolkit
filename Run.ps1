@@ -21,6 +21,7 @@ if (-not $ScriptRoot) {
 . "$ScriptRoot\Scripts\Utility\Discovery\Get-LoggedInUser.ps1"
 . "$ScriptRoot\Scripts\Utility\Discovery\Find-PatchContent.ps1"
 . "$ScriptRoot\Scripts\Utility\Discovery\Get-StaleAsset.ps1"
+. "$ScriptRoot\Scripts\Utility\Discovery\Get-AcrobatLicenseDiagnostics.ps1"
 . "$ScriptRoot\Scripts\Utility\Maintenance\Restart-Machine.ps1"
 . "$ScriptRoot\Scripts\Utility\Maintenance\Repair-MachineHealth.ps1"
 . "$ScriptRoot\Scripts\Utility\Maintenance\Repair-WindowsUpdate.ps1"
@@ -48,6 +49,12 @@ Find-PatchContent -ComputerName $TargetMachines -SearchString "google"
 
 # --- Get stale assets ---
 Get-StaleAsset -ComputerName $targetMachines -IncludeDHCP
+
+
+# --- Acrobat licensing/crash diagnostics ---
+Get-AcrobatLicenseDiagnostics -ComputerName "PC01"
+# Offline: analyze an exported Application .evtx around a reported failure time
+Get-AcrobatLicenseDiagnostics -EvtxPath "$env:USERPROFILE\Desktop\AdobePro_Issue_Logs.evtx" -AroundTime '2026-07-29 10:20'
 
 
 # =====================================================================

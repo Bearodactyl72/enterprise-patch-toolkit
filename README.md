@@ -329,7 +329,7 @@ Standalone scripts in `Scripts\Utility\` are organized by purpose. Open them ind
 | Category | Examples |
 |----------|----------|
 | **Cleanup** | Clear ConfigMgr cache, remove stale user profiles, remove stale registry uninstall keys, clean orphaned user registry keys |
-| **Discovery** | Find patch content in ccmcache, get logged-in users, query registry, find installed software, Dell BIOS settings, test remote access |
+| **Discovery** | Find patch content in ccmcache, get logged-in users, query registry, find installed software, Dell BIOS settings, test remote access, Acrobat licensing/crash diagnostics (remote or offline .evtx) |
 | **Maintenance** | Repair machine health (SFC/DISM/SCCM), repair Windows Update agent, restart machines, enable WinRM, renew DNS, install drivers |
 | **Remediation** | Log4J remediation, Tanium quarantine verification, MSI uninstall repair, user-scope software uninstalls |
 
